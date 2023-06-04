@@ -1,9 +1,6 @@
 use std::collections::HashMap;
-
-use macroquad::{
-    miniquad::gl::glDrawBuffers, prelude::*, text::draw_text, time::get_fps,
-    window::clear_background,
-};
+const a: u8 = 10;
+use macroquad::{color, prelude::*, text::draw_text, time::get_fps, window::clear_background};
 
 const MAP_SIZE: usize = 24;
 const MINIMAP_SIZE: Vec2 = Vec2 { x: 200.0, y: 200.0 }; // { x: 200.0, y: 200.0 };
@@ -91,6 +88,11 @@ pub struct Game {
     pub player: Player,
     pub current_map: [[u32; MAP_SIZE]; MAP_SIZE],
     pub textures: HashMap<String, Texture2D>,
+    pub textures_datas: HashMap<String, Image>,
+    pub textures_image_data: HashMap<String, Vec<[u8; 4]>>,
+
+    // u8 [r, g, b, alpha]
+    pub buffer: Vec<Vec<[u8; 4]>>,
 }
 
 pub struct Player {
@@ -103,11 +105,23 @@ pub struct Player {
 }
 
 impl Game {
-    pub fn new(textures: HashMap<String, Texture2D>) -> Game {
+    pub fn new(
+        textures: HashMap<String, Texture2D>,
+        textures_datas: HashMap<String, Image>,
+        textures_image_data: HashMap<String, Vec<[u8; 4]>>,
+    ) -> Game {
+        const WINDOW_WIDTH: i32 = 800;
+        const WINDOW_HEIGHT: i32 = 600;
+
+        let buffer = vec![vec![[0, 0, 0, 0]; WINDOW_WIDTH as usize]; WINDOW_HEIGHT as usize];
+
         Game {
-            window_size: Vec2 { x: 800.0, y: 600.0 },
+            window_size: Vec2 {
+                x: WINDOW_WIDTH as f32,
+                y: WINDOW_HEIGHT as f32,
+            },
             player: Player {
-                position: Vec2 { x: 5.25, y: 5.25 },
+                position: Vec2 { x: 1.25, y: 1.25 },
                 velocity: Vec2 { x: 0.0, y: 0.0 },
                 direction: Vec2 { x: 1.0, y: 0.0 },
                 movement_speed: 5.0,
@@ -117,6 +131,9 @@ impl Game {
             },
             current_map: TEST_MAP,
             textures,
+            textures_datas,
+            textures_image_data,
+            buffer,
         }
     }
 
@@ -196,22 +213,49 @@ impl Game {
                 }
             }
 
+            // let texture = self.textures.get("sample_wall").unwrap();
+            let texture_data = self.textures_datas.get("sample_wall").unwrap();
+            let texture_width = texture_data.width; // texture.width();
+            let texture_height = texture_data.height; // texture.height();
+
             if side == 0 {
                 perpendicular_wall_distance = side_distance.x - delta_distance_x;
             } else {
-                perpendicular_wall_distance = side_distance.y - delta_distance_y
+                perpendicular_wall_distance = side_distance.y - delta_distance_y;
             }
 
             let line_height = self.window_size.y / perpendicular_wall_distance;
+            let pitch: f32 = 100.0;
 
-            let mut draw_start = -line_height / 2.0 + self.window_size.y / 2.0;
-            if draw_start < 0.0 {
-                draw_start = 0.0
-            };
+            let mut draw_start: i32 =
+                (-line_height / 2.0 + self.window_size.y / 2.0 + pitch) as i32;
+            if draw_start < 0 {
+                draw_start = 0;
+            }
 
-            let mut draw_end = line_height / 2.0 + self.window_size.y / 2.0;
+            let mut draw_end = line_height / 2.0 + self.window_size.y / 2.0 + pitch;
             if draw_end >= self.window_size.y {
-                draw_end = self.window_size.y - 1.0
+                draw_end = self.window_size.y - 1.0;
+            }
+
+            let _texture_number = self.current_map[map_x as usize][map_y as usize] - 1;
+
+            #[allow(unused_assignments)]
+            let mut wall_x: f32 = 0.0;
+
+            if side == 0 {
+                wall_x = self.player.position.y + perpendicular_wall_distance * raycast_direction.y;
+            } else {
+                wall_x = self.player.position.x + perpendicular_wall_distance * raycast_direction.x;
+            }
+            wall_x -= f32::floor(wall_x);
+
+            let mut texture_x = ((wall_x as u16) * texture_width) as u32;
+            if side == 0 && raycast_direction.x > 0.0 {
+                texture_x = (texture_width as u32) - texture_x - 1; // 1;
+            }
+            if side == 1 && raycast_direction.y < 0.0 {
+                texture_x = (texture_width as u32) - texture_x - 1;
             }
 
             let color: Color = match self.current_map[map_x as usize][map_y as usize] {
@@ -223,13 +267,54 @@ impl Game {
                 _ => WHITE,
             };
 
-            //let img = Image::empty().set_pixel(0, 0, RED);
-            let img = Image::gen_image_color(100, 100, RED);
-            draw_texture(Texture2D::from_image(&img), 0.0, 0.0, RED);
+            let step: f32 = 1.0 * (texture_height as f32) / line_height;
+            let mut texture_position: f32 =
+                ((draw_start as f32) - pitch - self.window_size.y / 2.0 + line_height / 2.0) * step;
 
-            draw_line(x as f32, draw_start, x as f32, draw_end, 1.0, color);
+            let mut y = draw_start;
+            // while y < (draw_end as i32) {
+            //     let texture_y = (texture_position as u32) & ((texture_height as u32) - 1);
+            //     texture_position += step;
+
+            //     let color = self
+            //         .textures_datas
+            //         .get("sample_wall")
+            //         .unwrap()
+            //         .get_image_data()
+            //         [((texture_height as u32) * texture_y + texture_x) as usize];
+
+            //     self.buffer[y as usize][x as usize] = color;
+
+            //     y += 1;
+            // }
+
+            // unsafe {
+            //     let buf_n = 5000;
+            //     let mut buffer_u32: Vec<u32> = vec![];
+            //     for _ in 0..buf_n {
+            //         buffer_u32.push(0);
+            //     }
+
+            //     let a: *const c_void = buffer_u32.as_ptr() as *const GLvoid;
+
+            //     let mut vbo: GLuint = 0;
+            //     glGenBuffers(1, &mut vbo);
+            //     glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+            //     glBufferData(gl::GL_ARRAY_BUFFER, buf_n, a, GL_STATIC_DRAW);
+
+            //     glDrawArrays(GL_POINTS, 0, buf_n);
+            //     glDrawBuffers(buf_n, a as *const u32);
+            // };
+
+            draw_line(x as f32, draw_start as f32, x as f32, draw_end, 1.0, color);
         }
 
+        self.draw_ui();
+    }
+
+    fn draw_ui(&mut self) {
+        // FPS counter
         draw_text(
             &format!("FPS: {}", get_fps()),
             self.window_size.x - 100.0,
@@ -287,6 +372,7 @@ impl Game {
         if is_key_down(KeyCode::A) {
             let rotation_speed = self.player.rotation_speed * get_frame_time();
             let old_direction_x = self.player.direction.x;
+
             self.player.direction.x = old_direction_x * f32::cos(-rotation_speed)
                 - self.player.direction.y * f32::sin(-rotation_speed);
 
@@ -305,6 +391,7 @@ impl Game {
         if is_key_down(KeyCode::D) {
             let rotation_speed = -self.player.rotation_speed * get_frame_time();
             let old_direction_x = self.player.direction.x;
+
             self.player.direction.x = old_direction_x * f32::cos(-rotation_speed)
                 - self.player.direction.y * f32::sin(-rotation_speed);
 
